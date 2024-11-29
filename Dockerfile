@@ -1,6 +1,6 @@
 # Build stage for qemu-system-arm
 FROM debian:stable-slim AS qemu-builder
-ARG QEMU_VERSION=6.0.0
+ARG QEMU_VERSION=9.2.0-rc0
 ENV QEMU_TARBALL="qemu-${QEMU_VERSION}.tar.xz"
 WORKDIR /qemu
 
@@ -18,22 +18,23 @@ RUN gpg --keyserver keyserver.ubuntu.com --recv-keys CEACC9E15534EBABB82D3FA0335
 RUN gpg --verify "${QEMU_TARBALL}.sig" "${QEMU_TARBALL}"
 
 RUN # Extract source tarball
-RUN apt-get -y install pkg-config
+RUN apt-get -y install pkg-config xz-utils
 RUN tar xvf "${QEMU_TARBALL}"
 
 RUN # Build source
 # These seem to be the only deps actually required for a successful  build
-RUN apt-get -y install python build-essential libglib2.0-dev libpixman-1-dev ninja-build
+RUN apt-get -y install python3 python3-venv python3-pip build-essential libglib2.0-dev libpixman-1-dev ninja-build
+RUN pip3 install sphinx==5.3.0 sphinx_rtd_theme --break-system-packages
 # These don't seem to be required but are specified here: https://wiki.qemu.org/Hosts/Linux
 RUN apt-get -y install libfdt-dev zlib1g-dev
 # Not required or specified anywhere but supress build warnings
 RUN apt-get -y install flex bison
-RUN "qemu-${QEMU_VERSION}/configure" --static --target-list=arm-softmmu,aarch64-softmmu
-RUN make -j$(nproc)
+RUN cd "qemu-${QEMU_VERSION}" && ./configure --target-list=arm-softmmu,aarch64-softmmu
+RUN cd "qemu-${QEMU_VERSION}" && make -j$(nproc)
 
 RUN # Strip the binary, this gives a substantial size reduction!
-RUN strip "arm-softmmu/qemu-system-arm" "aarch64-softmmu/qemu-system-aarch64" "qemu-img"
-
+RUN cd "qemu-${QEMU_VERSION}/build" && strip "qemu-system-arm" "qemu-system-aarch64" "qemu-img"
+RUN mv "qemu-${QEMU_VERSION}/build" /qemu
 
 # Build stage for fatcat
 FROM debian:stable-slim AS fatcat-builder
@@ -46,7 +47,7 @@ RUN # Update package lists
 RUN apt-get update
 
 RUN # Pull source
-RUN apt-get -y install wget
+RUN apt-get -y install wget xz-utils
 RUN wget "https://github.com/Gregwar/fatcat/archive/${FATCAT_TARBALL}"
 RUN echo "${FATCAT_CHECKSUM} ${FATCAT_TARBALL}" | sha256sum --check
 
@@ -65,9 +66,9 @@ LABEL maintainer="Luke Childs <lukechilds123@gmail.com>"
 ARG RPI_KERNEL_URL="https://github.com/dhruvvyas90/qemu-rpi-kernel/archive/afe411f2c9b04730bcc6b2168cdc9adca224227c.zip"
 ARG RPI_KERNEL_CHECKSUM="295a22f1cd49ab51b9e7192103ee7c917624b063cc5ca2e11434164638aad5f4"
 
-COPY --from=qemu-builder /qemu/arm-softmmu/qemu-system-arm /usr/local/bin/qemu-system-arm
-COPY --from=qemu-builder /qemu/aarch64-softmmu/qemu-system-aarch64 /usr/local/bin/qemu-system-aarch64
-COPY --from=qemu-builder /qemu/qemu-img /usr/local/bin/qemu-img
+COPY --from=qemu-builder /qemu/build/qemu-system-arm /usr/local/bin/qemu-system-arm
+COPY --from=qemu-builder /qemu/build/qemu-system-aarch64 /usr/local/bin/qemu-system-aarch64
+COPY --from=qemu-builder /qemu/build/qemu-img /usr/local/bin/qemu-img
 COPY --from=fatcat-builder /fatcat/fatcat /usr/local/bin/fatcat
 
 ADD $RPI_KERNEL_URL /tmp/qemu-rpi-kernel.zip
